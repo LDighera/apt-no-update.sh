@@ -15,14 +15,6 @@ https://aistudio.google.com/prompts/1LfCZpbyR5E_8UibcegynDfzrpA7nNgmI
 # no-update.sh - Manage apt-mark hold status for specified packages.
 # Works in bash and ksh. Run as root or with sudo.
 # Allows selection by number or first letter (case-insensitive) for main menus.
-#
-# LGD: Wed Apr 16 11:12:10 AM PDT 2025 (Original Header Comment)
-# Source: https://www.tecmint.com/disable-lock-blacklist-package-updates-ubuntu-debian-apt/
-(Original Header Comment)
-# Created with Google Gemini 2.5:
-https://aistudio.google.com/prompts/1LfCZpbyR5E_8UibcegynDfzrpA7nNgmI
-(Original Header Comment)
-#
 
 # --- Setterm Color/Highlighting Functions ---
 TERM_SUPPORTS_COLOR=false
