@@ -133,45 +133,47 @@ manage_package() {
 }
 # --- End Status and Action Functions ---
 
+
 # --- Main Script Logic ---
 # 1. Check for root privileges
 if [ "$(id -u)" -ne 0 ]; then color_red; color_bold; echo "ERROR: This script must be run as root or using sudo." >&2; color_reset; exit 1; fi
 
 # 2. Check arguments
-if [ $# -eq 0 ]; then color_red; color_bold; echo "Usage: sudo $0 <package1> [package2] ..." >&2; color_reset; exit 1; fi
+# Allow running with no arguments - user can add packages via menu
+# if [ $# -eq 0 ]; then color_red; color_bold; echo "Usage: sudo $0 [package1] [package2] ..." >&2; color_reset; exit 1; fi
 
 # 3. Validate packages and identify manageable types
 installed_packages_string=""
 pinnable_packages_string=""
 all_manageable_packages_string=""
-echo "Validating packages..."
-for pkg in "$@"; do
-    all_manageable_packages_string="${all_manageable_packages_string}${all_manageable_packages_string:+ }$pkg"
-    if is_installed "$pkg"; then
-        color_green; printf "  [ OK ]"; color_reset; echo " '$pkg' is installed (Holdable)."
-        installed_packages_string="${installed_packages_string}${installed_packages_string:+ }$pkg"
-    else
-        color_blue; printf "  [INFO]"; color_reset; echo " '$pkg' is not installed (Pinnable)."
-        pinnable_packages_string="${pinnable_packages_string}${pinnable_packages_string:+ }$pkg"
-    fi
-done
-printf "%s\n" "$SEPARATOR" # Use standard separator
-
-# 4. Exit if no manageable packages remain
-if [ -z "$all_manageable_packages_string" ]; then
-    color_red; color_bold; echo "Error: No manageable packages specified or found. Exiting." >&2
-    color_reset; exit 1
+# Only validate if arguments were actually provided
+if [ $# -gt 0 ]; then
+    echo "Validating packages..."
+    for pkg in "$@"; do
+        all_manageable_packages_string="${all_manageable_packages_string}${all_manageable_packages_string:+ }$pkg"
+        if is_installed "$pkg"; then
+            color_green; printf "  [ OK ]"; color_reset; echo " '$pkg' is installed (Holdable)."
+            installed_packages_string="${installed_packages_string}${installed_packages_string:+ }$pkg"
+        else
+            color_blue; printf "  [INFO]"; color_reset; echo " '$pkg' is not installed (Pinnable)."
+            pinnable_packages_string="${pinnable_packages_string}${pinnable_packages_string:+ }$pkg"
+        fi
+    done
+    printf "%s\n" "$SEPARATOR" # Use standard separator
 fi
 
+# 4. Exit if no manageable packages remain - THIS CHECK IS NOW REDUNDANT as we allow adding via menu
+# if [ -z "$all_manageable_packages_string" ]; then ... fi
+
 # 5. Define main menu options string
-main_options="Hold/Pin Unhold/Unpin Status Quit"
+main_options="Hold/Pin Unhold/Unpin Status Add_Package Quit"
 
 # 6. Set the main menu prompt
 PS3="$(color_blue; color_bold)Select number or letter of action: $(color_reset)"
 
 # 7. Start the main select loop
 color_bold; echo "Package Hold/Pin Manager"; color_reset
-echo "Working with packages: $(color_yellow)$all_manageable_packages_string$(color_reset)"
+echo "Working with packages: $(color_yellow)${all_manageable_packages_string:-None Specified}$(color_reset)" # Show initial list or None
 printf "%s\n" "$SEPARATOR" # Use standard separator
 
 # Main Loop
@@ -182,6 +184,7 @@ select action_choice in $main_options; do
             [Hh] | [Pp] ) action_choice="Hold/Pin" ;;
             [Uu] ) action_choice="Unhold/Unpin" ;;
             [Ss] ) action_choice="Status" ;;
+            [Aa] ) action_choice="Add_Package" ;;
             [Qq] ) action_choice="Quit" ;;
         esac
     fi
@@ -190,89 +193,95 @@ select action_choice in $main_options; do
         "Hold/Pin") action_verb="set" ;;
         "Unhold/Unpin") action_verb="unset" ;;
         "Status") action_verb="status" ;;
+        "Add_Package") action_verb="add" ;;
         "Quit") echo "Exiting."; break ;;
-        *) color_red; echo "Invalid option '$REPLY'. Please choose number or letter (H/P, U, S, Q)."; color_reset; continue ;;
+        *) color_red; echo "Invalid option '$REPLY'. Please choose number or letter (H/P, U, S, A, Q)."; color_reset; continue ;;
     esac
 
     # --- Sub-logic based on action ---
-    if [ "$action_verb" = "status" ]; then
-        echo; color_bold; echo "--- Current Hold/Pin Status ---"; color_reset # Keep this format
-        for pkg in $all_manageable_packages_string; do
-             print_package_status "$pkg"
-        done
-        printf "%s\n" "$SEPARATOR"; color_reset # Use standard separator
-    else
+    if [ "$action_verb" = "add" ]; then
+        echo
+        printf "%s" "$(color_blue; color_bold)Enter package name(s) to add (space-separated): $(color_reset)"
+        read -r new_pkgs_input
+        if [ -z "$new_pkgs_input" ]; then echo "$(color_yellow)No package names entered.$(color_reset)";
+        else
+            echo "Processing new packages..."
+            pkg_added_count=0; oIFS="$IFS"; IFS=' '$'\t'$'\n'; set -- $new_pkgs_input; IFS="$oIFS"
+            for new_pkg in "$@"; do
+                 new_pkg=$(echo "$new_pkg" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'); if [ -z "$new_pkg" ]; then continue; fi
+                 is_already_managed=false; case " $all_manageable_packages_string " in *" $new_pkg "*) is_already_managed=true ;; esac
+                 if [ "$is_already_managed" = true ]; then echo "  $(color_yellow)Skipping '$new_pkg': Already in the list.$(color_reset)"; continue; fi
+                 all_manageable_packages_string="${all_manageable_packages_string}${all_manageable_packages_string:+ }$new_pkg"
+                 if is_installed "$new_pkg"; then color_green; printf "  [ OK ]"; color_reset; echo " '$new_pkg' is installed (Holdable). Added."; installed_packages_string="${installed_packages_string}${installed_packages_string:+ }$new_pkg";
+                 else color_blue; printf "  [INFO]"; color_reset; echo " '$new_pkg' is not installed (Pinnable). Added."; pinnable_packages_string="${pinnable_packages_string}${pinnable_packages_string:+ }$new_pkg"; fi
+                 pkg_added_count=$((pkg_added_count + 1))
+            done
+            if [ $pkg_added_count -gt 0 ]; then echo "Done adding packages. Updated list:"; echo "Working with packages: $(color_yellow)$all_manageable_packages_string$(color_reset)";
+            else echo "No new packages were added to the list."; fi
+             printf "%s\n" "$SEPARATOR"
+        fi
+    elif [ "$action_verb" = "status" ]; then
+        # *** UPDATED STATUS SECTION ***
+        # --- Section 1: Status of Packages Currently Being Managed ---
+        echo; color_bold; echo "--- Status for Currently Managed Packages ---"; color_reset
+        if [ -z "$all_manageable_packages_string" ]; then
+             echo "  (No packages currently specified for management)"
+        else
+            for pkg in $all_manageable_packages_string; do
+                 print_package_status "$pkg"
+            done
+        fi
+        printf "%s\n" "$SEPARATOR"
+
+        # --- Section 2: Other Held Packages (System-wide) ---
+        echo; color_bold; echo "--- Other Held Packages (System-wide) ---"; color_reset
+        held_list=$(apt-mark showhold 2>/dev/null)
+        if [ -n "$held_list" ]; then color_yellow; printf "%s\n" "$held_list" | sed 's/^/  /'; color_reset;
+        else echo "  [None]"; fi
+        printf "%s\n" "$SEPARATOR"
+
+        # --- Section 3: Other Pinned Packages (by this script) ---
+        echo; color_bold; echo "--- Other Pinned Packages (by this script) ---"; color_reset
+        if [ -f "$SCRIPT_PINNING_FILE" ]; then
+            pinned_list=$(awk '/^[[:space:]]*Package:/ {print $2}' "$SCRIPT_PINNING_FILE")
+            if [ -n "$pinned_list" ]; then color_red; printf "%s\n" "$pinned_list" | sed 's/^/  /'; color_reset;
+            else echo "  [None]"; fi
+        else echo "  [None]"; fi
+        printf "%s\n" "$SEPARATOR"; color_reset
+        # *** END UPDATED STATUS SECTION ***
+    else # Actions: "set" or "unset"
+        if [ -z "$all_manageable_packages_string" ]; then color_yellow; echo "No packages currently specified to Hold/Pin or Unhold/Unpin."; color_reset; continue; fi
         sub_options="All Individual Back"
         if [ "$action_verb" = "set" ]; then prompt_verb="Hold/Pin"; else prompt_verb="Unhold/Unpin"; fi
         PS3_SUB="$(color_blue)Apply '$prompt_verb' to (All/Individual/Back/Letter): $(color_reset)"
-        current_ps3="$PS3"; PS3="$PS3_SUB"
-        echo
+        current_ps3="$PS3"; PS3="$PS3_SUB"; echo
         select sub_choice in $sub_options; do
-            if [ -z "$sub_choice" ]; then
-                case "$REPLY" in
-                    [Aa] ) sub_choice="All" ;;
-                    [Ii] ) sub_choice="Individual" ;;
-                    [Bb] ) sub_choice="Back" ;;
-                esac
-            fi
+            if [ -z "$sub_choice" ]; then case "$REPLY" in [Aa] ) sub_choice="All" ;; [Ii] ) sub_choice="Individual" ;; [Bb] ) sub_choice="Back" ;; esac; fi
             case "$sub_choice" in
                 All)
-                    echo; color_bold; echo "--- Applying '$prompt_verb' to all manageable packages ---"; color_reset # Keep this format
+                    echo; color_bold; echo "--- Applying '$prompt_verb' to all manageable packages ---"; color_reset
                     error_occurred=false
-                    for pkg in $installed_packages_string; do
-                        if [ "$action_verb" = "set" ]; then manage_package "hold" "$pkg" || error_occurred=true
-                        else manage_package "unhold" "$pkg" || error_occurred=true; fi
-                    done
-                    for pkg in $pinnable_packages_string; do
-                         if [ "$action_verb" = "set" ]; then
-                            pin_package "$pkg"; ret_code=$?
-                            if [ $ret_code -eq 0 ]; then echo "$(color_green)Successfully pinned package '$pkg'.$(color_reset)";
-                            elif [ $ret_code -eq 2 ]; then echo "$(color_yellow)Package '$pkg' was already pinned.$(color_reset)";
-                            else error_occurred=true; fi
-                         else
-                            unpin_package "$pkg"; ret_code=$?
-                            if [ $ret_code -eq 0 ]; then echo "$(color_green)Successfully unpinned package '$pkg'.$(color_reset)";
-                            elif [ $ret_code -eq 2 ]; then echo "$(color_yellow)Package '$pkg' was not pinned (by this script).$(color_reset)";
-                            else error_occurred=true; fi
-                         fi
-                    done
-                    if [ "$error_occurred" = false ]; then echo "$(color_green)Action '$prompt_verb' completed for all packages (if applicable).$(color_reset)";
-                    else echo "$(color_yellow)Action '$prompt_verb' attempted, some steps may have failed (see messages above).$(color_reset)"; fi
-                    printf "%s\n" "$SEPARATOR"; break # Use standard separator
-                    ;; # End "All" case
-
+                    for pkg in $installed_packages_string; do if [ "$action_verb" = "set" ]; then manage_package "hold" "$pkg" || error_occurred=true; else manage_package "unhold" "$pkg" || error_occurred=true; fi; done
+                    for pkg in $pinnable_packages_string; do if [ "$action_verb" = "set" ]; then pin_package "$pkg"; ret_code=$?; if [ $ret_code -eq 0 ]; then echo "$(color_green)Successfully pinned package '$pkg'.$(color_reset)"; elif [ $ret_code -eq 2 ]; then echo "$(color_yellow)Package '$pkg' was already pinned.$(color_reset)"; else error_occurred=true; fi; else unpin_package "$pkg"; ret_code=$?; if [ $ret_code -eq 0 ]; then echo "$(color_green)Successfully unpinned package '$pkg'.$(color_reset)"; elif [ $ret_code -eq 2 ]; then echo "$(color_yellow)Package '$pkg' was not pinned (by this script).$(color_reset)"; else error_occurred=true; fi; fi; done
+                    if [ "$error_occurred" = false ]; then echo "$(color_green)Action '$prompt_verb' completed for all packages (if applicable).$(color_reset)"; else echo "$(color_yellow)Action '$prompt_verb' attempted, some steps may have failed (see messages above).$(color_reset)"; fi
+                    printf "%s\n" "$SEPARATOR"; break ;;
                 Individual)
                     pkg_options_string="$all_manageable_packages_string Cancel"
                     PS3_PKG="$(color_blue)Select package to '$prompt_verb' (Num/Cancel): $(color_reset)"
-                    current_ps3_sub="$PS3"; PS3="$PS3_PKG"
-                    echo
+                    current_ps3_sub="$PS3"; PS3="$PS3_PKG"; echo
                     select pkg_to_manage in $pkg_options_string; do
                          if [ "$pkg_to_manage" = "Cancel" ]; then echo "Cancelled individual selection."; break;
                          elif [ -n "$pkg_to_manage" ]; then
-                              is_valid_selection=false
-                              case " $all_manageable_packages_string " in *" $pkg_to_manage "*) is_valid_selection=true ;; esac
+                              is_valid_selection=false; case " $all_manageable_packages_string " in *" $pkg_to_manage "*) is_valid_selection=true ;; esac
                               if [ "$is_valid_selection" = true ]; then
-                                  if is_holdable "$pkg_to_manage"; then
-                                      if [ "$action_verb" = "set" ]; then manage_package "hold" "$pkg_to_manage";
-                                      else manage_package "unhold" "$pkg_to_manage"; fi
-                                  elif is_pinnable "$pkg_to_manage"; then
-                                      if [ "$action_verb" = "set" ]; then
-                                          pin_package "$pkg_to_manage"; ret_code=$?
-                                          if [ $ret_code -eq 0 ]; then echo "$(color_green)Successfully pinned package '$pkg_to_manage'.$(color_reset)";
-                                          elif [ $ret_code -eq 2 ]; then echo "$(color_yellow)Package '$pkg_to_manage' was already pinned.$(color_reset)"; fi
-                                      else
-                                          unpin_package "$pkg_to_manage"; ret_code=$?
-                                          if [ $ret_code -eq 0 ]; then echo "$(color_green)Successfully unpinned package '$pkg_to_manage'.$(color_reset)";
-                                          elif [ $ret_code -eq 2 ]; then echo "$(color_yellow)Package '$pkg_to_manage' was not pinned (by this script).$(color_reset)"; fi
-                                      fi
+                                  if is_holdable "$pkg_to_manage"; then if [ "$action_verb" = "set" ]; then manage_package "hold" "$pkg_to_manage"; else manage_package "unhold" "$pkg_to_manage"; fi
+                                  elif is_pinnable "$pkg_to_manage"; then if [ "$action_verb" = "set" ]; then pin_package "$pkg_to_manage"; ret_code=$?; if [ $ret_code -eq 0 ]; then echo "$(color_green)Successfully pinned package '$pkg_to_manage'.$(color_reset)"; elif [ $ret_code -eq 2 ]; then echo "$(color_yellow)Package '$pkg_to_manage' was already pinned.$(color_reset)"; fi; else unpin_package "$pkg_to_manage"; ret_code=$?; if [ $ret_code -eq 0 ]; then echo "$(color_green)Successfully unpinned package '$pkg_to_manage'.$(color_reset)"; elif [ $ret_code -eq 2 ]; then echo "$(color_yellow)Package '$pkg_to_manage' was not pinned (by this script).$(color_reset)"; fi; fi
                                   else color_red; echo "Internal Error: Package '$pkg_to_manage' not found in known lists."; color_reset; fi
                                   break
                               else color_red; echo "Invalid selection '$REPLY'. Choose number or Cancel."; color_reset; fi
                          else color_red; echo "Invalid choice '$REPLY'. Please choose number or Cancel."; color_reset; fi
                     done
-                    PS3="$current_ps3_sub"; break
-                    ;; # End "Individual" case
-
+                    PS3="$current_ps3_sub"; break ;;
                 Back) break ;;
                 *) color_red; echo "Invalid option '$REPLY'. Please choose number or letter (A, I, B)."; color_reset; printf "%s" "$PS3" >&2 ;;
             esac
@@ -290,4 +299,3 @@ done # End main select loop
 color_reset # Final reset
 echo "Script finished."
 exit 0
-
