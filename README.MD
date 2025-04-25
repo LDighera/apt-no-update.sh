@@ -71,3 +71,4 @@ It serves users who want fine-grained control over both upgrades and potential i
 ## Acknowledgements
 
 This script was developed collaboratively with Google Gemini, evolving from a simpler hold-only script (`apt-no-update.sh`).
+
